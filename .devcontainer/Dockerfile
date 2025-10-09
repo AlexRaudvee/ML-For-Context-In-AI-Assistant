@@ -8,6 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Make setup.sh executable
-# RUN chmod +x setup.sh && ./setup.sh
+RUN export PYTHONPATH="$(pwd)/src"
 
 CMD [ "bash" ]

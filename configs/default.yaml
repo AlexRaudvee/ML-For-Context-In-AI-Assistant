@@ -1,0 +1,24 @@
+
+model_name: sentence-transformers/all-MiniLM-L6-v2
+index:
+  backend: usearch
+  metric: cosine
+  dim: 384
+  connect: 0
+  ef_construction: 128
+  ef_search: 64
+api:
+  host: 0.0.0.0
+  port: 8000
+train:
+  batch_size: 64
+  lr: 2e-5
+  epochs: 1
+  warmup_steps: 100
+  max_len: 128
+  loss: multiple_negatives # or info_nce
+paths:
+  index_path: models/usearch.index
+  cosqa_dir: data/cosqa
+  results_dir: results
+  logs_dir: logs
