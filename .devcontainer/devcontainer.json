@@ -1,16 +1,22 @@
 {
-    "name": "My Docker Dev Env",
-    "build": {
-      "dockerfile": "Dockerfile",
-      "context": ".."
-    },
-    "settings": {
-      "terminal.integrated.defaultProfile.linux": "bash"
-    },
-    "extensions": [
-      "ms-python.python",
-      "ms-toolsai.jupyter"
-    ],
-    "postCreateCommand": "pip install -r requirements.txt",
-    "remoteUser": "root"
-  }
+  "name": "codesearch-dev",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "app",
+  "workspaceFolder": "/workspace",
+
+  "overrideCommand": true,          // let VS Code control the container command
+  "runServices": ["qdrant", "app"], // bring both up
+  "forwardPorts": [8000, 6333],     // API + Qdrant UI
+  "remoteUser": "root",
+
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "bash"
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter"
+  ],
+
+  // Optional if you didn't bake deps in the image
+  "postCreateCommand": "pip install -r requirements.txt"
+}
