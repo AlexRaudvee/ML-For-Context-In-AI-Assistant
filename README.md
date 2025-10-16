@@ -198,7 +198,7 @@ docker compose exec app bash -lc "jupyter nbconvert --to notebook --execute note
 
 ## Google Colab 
 
-`main.ipynb` is the main file that you have to run in colab. At the same time do not forget to load the ziped version of repo in your google disk (the account that you use for colab and disk should be the same).
+`main.ipynb` is the main file that you have to run in colab. At the same time do not forget to load the ziped version of repo (given in `google-colab` folder) in your google disk (the account that you use for colab and disk should be the same).
 
 ---
 
