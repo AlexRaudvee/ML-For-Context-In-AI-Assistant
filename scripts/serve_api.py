@@ -1,8 +1,7 @@
-import argparse, json
+import argparse
 import uvicorn
-from pathlib import Path
 
-from codesearch.api.main import app, bootstrap_usearch, bootstrap_qdrant
+from codesearch.api.main import app, bootstrap_qdrant
 
 
 def main():
@@ -26,12 +25,8 @@ def main():
 
     args = ap.parse_args()
 
-    if args.backend == "usearch":
-        texts = []
-        if args.texts_json and Path(args.texts_json).exists():
-            texts = json.loads(Path(args.texts_json).read_text(encoding="utf-8"))
-        bootstrap_usearch(texts, args.model)
-    else:
+
+    if args.backend == "qdrant":
         bootstrap_qdrant(
             model_name=args.model,
             host=args.qdrant_host,
