@@ -205,10 +205,24 @@ docker compose exec app bash -lc "jupyter nbconvert --to notebook --execute note
 
 > Note: In general we can see a good improvement of results 
 
-MRR@10 jumped 0.8017 → 0.8877 and nDCG@10 0.8456 → 0.9152, meaning the correct snippet appears earlier more often; Recall@10 dipped slightly 0.9780 → 0.9960. That pattern is typical for MultipleNegativesRankingLoss: it sharpens relative ordering (better top ranks) without explicitly optimizing broad coverage, so a few borderline positives fall below rank 10 while overall ranking quality improves.
-
 - **Training loss curve**: see `results/assets`
 - **GPU and Disk usage**: see `results/assets`
+
+- **Example**: Before fine-tunning
+
+```
+Query q20105 -> hits: [(0, 'd20105'), (225, 'd20330'), (317, 'd20422'), (320, 'd20425'), (12, 'd20117')] ; relevant: [0]
+Query q20106 -> hits: [(1, 'd20106'), (377, 'd20482'), (25, 'd20130'), (237, 'd20342'), (487, 'd20592')] ; relevant: [1]
+Query q20107 -> hits: [(224, 'd20329'), (2, 'd20107'), (279, 'd20384'), (31, 'd20136'), (448, 'd20553')] ; relevant: [2]
+```
+
+- **Example**: After fine-tunning
+
+```
+Query q20105 -> hits: [(0, 'd20105'), (12, 'd20117'), (225, 'd20330'), (163, 'd20268'), (317, 'd20422')] ; relevant: [0]
+Query q20106 -> hits: [(1, 'd20106'), (377, 'd20482'), (25, 'd20130'), (80, 'd20185'), (60, 'd20165')] ; relevant: [1]
+Query q20107 -> hits: [(2, 'd20107'), (224, 'd20329'), (185, 'd20290'), (51, 'd20156'), (83, 'd20188')] ; relevant: [2]
+```
 
 ### Visuals
 
@@ -232,7 +246,6 @@ MRR@10 jumped 0.8017 → 0.8877 and nDCG@10 0.8456 → 0.9152, meaning the corre
 - All three metrics improved—Recall@10: 0.9780 → 0.9960, MRR@10: 0.8017 → 0.8877, nDCG@10: 0.8456 → 0.9152—so the model both finds the right code more often and ranks it higher. This is exactly what MultipleNegativesRankingLoss tends to deliver: tighter alignment of query↔code positives and stronger separation from in-batch negatives, which boosts top-rank precision (MRR/nDCG) while also broadening coverage (Recall) when the domain matches the fine-tuning data.
 
 ---
-
 
 ## 🧯 Troubleshooting
 
