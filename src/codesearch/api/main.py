@@ -1,11 +1,9 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Optional, Literal
-import numpy as np
 
 from codesearch.embeddings import EmbeddingModel
-from codesearch.index.usearch_index import USearchIndex
-from codesearch.index.qdrant_index import QdrantIndex  # NEW
+from codesearch.index.qdrant_index import QdrantIndex  
 
 
 app = FastAPI(title="Code Search API")
@@ -29,8 +27,7 @@ class SearchResponse(BaseModel):
 # Global state (demo)
 texts: List[str] = []
 model: Optional[EmbeddingModel] = None
-backend: Literal["usearch", "qdrant"] = "usearch"
-uindex: Optional[USearchIndex] = None
+backend: Literal["usearch", "qdrant"] = "qdrant"
 qindex: Optional[QdrantIndex] = None
 
 
@@ -38,23 +35,6 @@ qindex: Optional[QdrantIndex] = None
 def search(req: SearchRequest):
     assert model is not None, "Server not initialized"
     q = model.encode([req.query])
-
-    # --- USEARCH path (in-process, returns text from `texts`) ---
-    if backend == "usearch":
-        assert uindex is not None
-        ids, scores = uindex.search(q, req.k)
-        ids = ids[0].tolist()
-        scores = scores[0].tolist()
-        items = [
-            SearchResponseItem(
-                id=i,
-                score=float(scores[j]),
-                text=texts[i] if i < len(texts) else "",
-                meta=None,
-            )
-            for j, i in enumerate(ids)
-        ]
-        return SearchResponse(results=items)
 
     # --- QDRANT path (payload holds the text & metadata) ---
     assert qindex is not None
@@ -78,18 +58,6 @@ def search(req: SearchRequest):
         for j, i in enumerate(ids)
     ]
     return SearchResponse(results=items)
-
-
-def bootstrap_usearch(loaded_texts: List[str], model_name: str):
-    """Start the API with an in-process USEARCH index (old behavior)."""
-    global texts, model, backend, uindex, qindex
-    texts = loaded_texts
-    model = EmbeddingModel(model_name)
-    uindex = USearchIndex(dim=model.dim)
-    qindex = None
-    backend = "usearch"
-    embs = model.encode(texts)
-    uindex.add(embs, range(len(texts)))
 
 
 def bootstrap_qdrant(model_name: str, dim_hint: Optional[int] = None, **qdrant_kwargs):

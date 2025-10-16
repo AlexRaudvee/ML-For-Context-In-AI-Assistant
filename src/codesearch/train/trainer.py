@@ -1,86 +1,114 @@
+from __future__ import annotations
+import argparse
+from typing import List
 
-import argparse, math, os, json
-from dataclasses import dataclass
-from typing import List, Tuple
-
+from datasets import load_dataset
+from sentence_transformers import SentenceTransformer, InputExample, losses
+from torch.utils.data import DataLoader
 import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer, AutoModel
+import matplotlib.pyplot as plt
 
-from codesearch.data.cosqa import load_cosqa
-from codesearch.train.losses import MultipleNegativesRankingLoss, InfoNCELoss
+from ..utils.eval import *
+from .losses import *
 
-@dataclass
-class PairDataset(Dataset):
-    queries: List[str]
-    codes: List[str]
-    tokenizer
-    max_len: int = 128
-
-    def __len__(self): return len(self.queries)
-
-    def __getitem__(self, idx):
-        q = self.tokenizer(self.queries[idx], truncation=True, max_length=self.max_len, padding="max_length", return_tensors="pt")
-        c = self.tokenizer(self.codes[idx], truncation=True, max_length=self.max_len, padding="max_length", return_tensors="pt")
-        return {k: v.squeeze(0) for k, v in q.items()}, {k: v.squeeze(0) for k, v in c.items()}
-
-def mean_pool(last_hidden_state, attention_mask):
-    mask = attention_mask.unsqueeze(-1).float()
-    summed = (last_hidden_state * mask).sum(dim=1)
-    counts = mask.sum(dim=1).clamp(min=1e-9)
-    return summed / counts
 
 def main():
+    
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="sentence-transformers/all-MiniLM-L6-v2")
-    ap.add_argument("--epochs", type=int, default=1)
-    ap.add_argument("--batch_size", type=int, default=64)
-    ap.add_argument("--lr", type=float, default=2e-5)
-    ap.add_argument("--max_len", type=int, default=128)
-    ap.add_argument("--loss", choices=["mnr", "info_nce"], default="mnr")
-    ap.add_argument("--save_dir", default="models/finetuned")
+    ap.add_argument("--model", type=str, default="sentence-transformers/all-MiniLM-L12-v2", help="Model that is going to be used for finetunning")
+    ap.add_argument("--finetune-dir", type=str, default="models")
+    ap.add_argument("--checkpoint-path", type=str, default="checkpoint")
+    ap.add_argument("--assets-dir", type=str, default="results/assets")
+    
+    ap.add_argument("--qdrant-host", type=str, default="qdrant")
+    ap.add_argument("--qdrant-port", type=int, default=6333)
+    ap.add_argument("--qdrant-collection", type=str, default='cosqa_test_bodies')
+    ap.add_argument("--qdrant-collection-ft", type=str, default='cosqa_test_ft')
+    ap.add_argument("--K", type=int, default=3, help="top K indices from qdrant")
+
+    ap.add_argument("--batch-size", type=int, default=32, help="batch size for finetuning")
+    ap.add_argument("--epochs", type=int, default=10, help="number of epochs the model is going to be trained")
+    ap.add_argument("--lr", type=float, default=2e-5, help="learning rate")
+    ap.add_argument("--max-steps-per-epoch", type=int, default=0, help="0 means no limit (full train)")    
+    ap.add_argument("--seed", type=int, default=69, help="seed for consistency of results replication")
+    ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
+    
+    fix_seed(42)
 
-    data = load_cosqa("train")
-    tok = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModel.from_pretrained(args.model)
+    corpus  = load_dataset("CoIR-Retrieval/cosqa", name="corpus")["corpus"]
+    queries = load_dataset("CoIR-Retrieval/cosqa", name="queries")["queries"]
 
-    ds = PairDataset(data["queries"], data["codes"], tok, args.max_len)
-    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True)
+    corpus_train  = [r for r in corpus  if str(r.get("partition","")).lower() == "train"]
+    queries_train = [r for r in queries if str(r.get("partition","")).lower() == "train"]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    loss_fn = MultipleNegativesRankingLoss() if args.loss == "mnr" else InfoNCELoss()
+    corpus_ids_train   = [str(r.get("_id", r.get("id"))) for r in corpus_train]
+    corpus_texts_train = [pick_text(r) for r in corpus_train]
+    queries_ids_train  = [str(r.get("_id", r.get("id"))) for r in queries_train]
+    queries_texts_train= [pick_text(r) for r in queries_train]
+    
+    print(f"[Data] Train: {len(queries_train)} q / {len(corpus_train)} docs")
 
-    os.makedirs(args.save_dir, exist_ok=True)
-    losses = []
-    step = 0
-    for epoch in range(args.epochs):
-        model.train()
-        for q_batch, c_batch in dl:
-            q_batch = {k: v.to(device) for k, v in q_batch.items()}
-            c_batch = {k: v.to(device) for k, v in c_batch.items()}
+    print("\n[Train] Fine-tuning with MultipleNegativesRankingLoss (in-batch negatives)…")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = SentenceTransformer(args.model, device=device)
 
-            q_out = model(**q_batch)
-            c_out = model(**c_batch)
-            zq = mean_pool(q_out.last_hidden_state, q_batch["attention_mask"])
-            zc = mean_pool(c_out.last_hidden_state, c_batch["attention_mask"])
+    # Build (query, positive code) pairs
+    pairs: List[InputExample] = []
+    cidx = {sid:i for i, sid in enumerate(corpus_ids_train)}
+    for qid, qtxt in zip(queries_ids_train, queries_texts_train):
+        tgt = f"d{suffix_id(qid)}"
+        j = cidx.get(tgt, None)
+        if j is not None:
+            if args.debug:
+                print(f"[Info] data in pairs {[qtxt, corpus_texts_train[j]]}")
+            pairs.append(InputExample(texts=[qtxt, corpus_texts_train[j]]))
 
-            loss = loss_fn(zq, zc)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
+    if len(pairs) == 0:
+        raise RuntimeError("No train pairs constructed; check dataset contents.")
 
-            losses.append(float(loss.item()))
-            step += 1
-            if step % 10 == 0:
-                print(f"step {step}: loss={losses[-1]:.4f}")
+    if args.max_steps_per_epoch > 0:
+        pairs = pairs[:args.max_steps_per_epoch * args.batch_size]
 
-    model.save_pretrained(args.save_dir)
-    tok.save_pretrained(args.save_dir)
-    with open(os.path.join(args.save_dir, "train_loss.json"), "w") as f:
-        json.dump(losses, f)
+    if args.debug:
+        pairs = pairs[:2]
+
+    train_dl = DataLoader(pairs, shuffle=False, batch_size=args.batch_size, drop_last=True)
+    train_loss = losses.MultipleNegativesRankingLoss(model)
+    probe = LossCurveLogger(model=model, loss=train_loss, examples=pairs[:min(256, len(pairs))], batch_size=min(64, len(pairs)))
+
+
+    warmup_steps = max(0, int(0.1 * len(train_dl) * args.epochs))
+    model.fit(
+        train_objectives=[(train_dl, train_loss)],
+        epochs=args.epochs,
+        warmup_steps=warmup_steps,
+        optimizer_params={"lr": args.lr},
+        use_amp=True,
+        show_progress_bar=True,
+        output_path=args.finetune_dir,   # saves model here
+        callback=probe,             # logs probe loss periodically
+        checkpoint_path=f"{args.checkpoint_path}"
+    )
+
+    print(f"[Save] Finetuned model saved to: {args.finetune_dir}")
+
+    # Plot loss curve
+    if probe.losses:
+        plt.figure()
+        plt.plot(probe.losses)
+        plt.title("Probe Loss (MultipleNegativesRankingLoss) over training")
+        plt.xlabel("Callback calls")
+        plt.ylabel("Loss")
+        plt.grid(True)
+        plt.savefig(f"{args.assets_dir}/probe_loss_training.png")
+    else:
+        print("[Warn] No loss points recorded; callback may not have fired.")
+
+
+    print("\nNotes:")
+    print("- Loss used: MultipleNegativesRankingLoss (MNRL): strong retrieval baseline using in-batch negatives;")
+    print("  it directly optimizes cosine similarity for (query, code) pairs and scales well without hard-negative mining.")
 
 if __name__ == "__main__":
     main()

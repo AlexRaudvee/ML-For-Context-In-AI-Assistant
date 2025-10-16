@@ -1,7 +1,10 @@
+from typing import List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from sentence_transformers import SentenceTransformer, InputExample, losses
 
 class InfoNCELoss(nn.Module):
     def __init__(self, temperature: float = 0.07):
@@ -27,3 +30,25 @@ class MultipleNegativesRankingLoss(nn.Module):
         scores = z_query @ z_code.t()
         labels = torch.arange(z_query.size(0), device=z_query.device)
         return F.cross_entropy(scores, labels)
+
+class LossCurveLogger:
+    """Callable that logs training loss on a fixed probe mini-batch (no SentenceEvaluator needed)."""
+    def __init__(self, model: SentenceTransformer, loss: losses.MultipleNegativesRankingLoss, examples: List[InputExample], batch_size: int = 64):
+        self.model = model
+        self.loss = loss
+        self.examples = examples[:batch_size]
+        self.bs = min(batch_size, len(self.examples))
+        self.losses: List[float] = []
+
+    def __call__(self, *args, **kwargs):
+        # Compute current MNRL on the fixed probe batch without gradients
+        self.model.train(False)
+        a = [ex.texts[0] for ex in self.examples]
+        b = [ex.texts[1] for ex in self.examples]
+        a_feats = self.model.tokenize(a)
+        b_feats = self.model.tokenize(b)
+        for k in a_feats: a_feats[k] = a_feats[k].to(self.model.device)
+        for k in b_feats: b_feats[k] = b_feats[k].to(self.model.device)
+        with torch.no_grad():
+            val = self.loss([a_feats, b_feats])  # returns scalar loss
+        self.losses.append(float(val.detach().cpu().item()))
