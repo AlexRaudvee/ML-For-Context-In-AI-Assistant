@@ -1,109 +1,248 @@
 
-# 🧭 Embeddings-based Code Search (CoSQA)
+# 🔎 Embeddings-based Code Search (CoSQA) — End‑to‑End
 
-A minimal-but-extendable code search engine with:
-- **Part 1**: Embeddings-based search + REST API (FastAPI)
-- **Part 2**: Evaluation on **CoSQA** with Recall@10, MRR@10, nDCG@10
-- **Part 3**: Fine-tuning on CoSQA to improve metrics (contrastive bi-encoder)
-- **Bonus**: Function name vs body search, index hyperparam sweeps
+This repository implements a simple but complete **code search engine** with:
+- **Indexing** code into a **Qdrant** vector database
+- **FastAPI** search API
+- **Evaluation on CoSQA** (test partition): **Recall@K, MRR@K, nDCG@K**
+- **Fine‑tuning** a bi‑encoder on CoSQA (train) and showing improved test metrics
+- **Smart chunking** (Python functions/classes via AST; windowed fallback for other langs)
+- **Dev Containers** + `docker-compose` for a one‑command local stack
 
+> ⚠️ Note: Model weights in some folders were deleted to keep this repo light. The code will download base models automatically; fine‑tuned checkpoints will be saved to `models/` during training.
 
 ---
 
-## 🔧 Quickstart
+## 🧭 Quick Start (TL;DR)
 
 ```bash
-# 1) Create env and install deps
-python -m venv .venv && source .venv/bin/activate
+# 0) Bring up Qdrant + dev container (from repo root on host)
+docker compose up -d
+
+# 1) (Optional) Open in VS Code -> "Reopen in Container"
+#    or attach a shell into the app container:
+docker compose exec app bash
+
+# 2) Install Python deps (inside container)
 pip install -r requirements.txt
 
-# 2) Ingest a small toy corpus (or your own code base)
-python scripts/ingest.py --input_glob "data/examples/**/*.py" --index_path models/usearch.index
+# 3) Ingest your codebase into Qdrant (smart chunking)
+python scripts/ingest.py \
+  --input_glob "data/examples/**/*.py" \
+  --model sentence-transformers/all-MiniLM-L12-v2 \
+  --qdrant-host qdrant --qdrant-port 6333 \
+  --qdrant-collection codes --qdrant-recreate \
+  --include-comments --max-func-lines 180 --win-lines 120 --overlap-lines 30
 
-# 3) Serve the search API
-python scripts/serve_api.py --index_path models/usearch.index --model sentence-transformers/all-MiniLM-L6-v2
+# 4) (Optional) Run the search API
+python scripts/serve_api.py \
+  --backend qdrant \
+  --model sentence-transformers/all-MiniLM-L12-v2 \
+  --qdrant-host qdrant --qdrant-port 6333 \
+  --qdrant-collection codes
 
-# 4) Query
-curl -X POST "http://localhost:8000/search" -H "Content-Type: application/json" -d '{"query":"read a csv file in pandas", "k": 5}'
+# 5) Evaluate on CoSQA (test) with any model or local finetuned dir
+python -m codesearch.eval.evaluator \
+  --model sentence-transformers/all-MiniLM-L12-v2 \
+  --qdrant-host qdrant --qdrant-port 6333 \
+  --qdrant-collection cosqa_test_baseline \
+  --K 10
 ```
 
 ---
 
-## 🗂️ Repository structure
+## 🐳 Dev Environment (Docker & VS Code)
+
+### Compose stack
+The repo ships with `docker-compose.yml` that defines:
+- `qdrant` — the vector DB (ports **6333/REST**, **6334/gRPC** exposed to host)
+- `app` — your Python dev container with the repo bind‑mounted at `/workspace`
+
+Start both:
+```bash
+docker compose up -d
+docker compose ps
+```
+
+Open the Qdrant UI / REST endpoint at: `http://localhost:6333`
+
+### VS Code Dev Container (recommended)
+- `.devcontainer/Dockerfile` builds the dev image (Python 3.12, sets `PYHYONPATH=/workspace/src`).
+- `.devcontainer/devcontainer.json` attaches VS Code to the `app` service from compose.
+
+Steps:
+1. Open repo in VS Code
+2. **Command Palette → Dev Containers: Reopen in Container**
+3. A terminal opens inside `/workspace` with all ports forwarded (8000 for API, 6333 for Qdrant).
+
+---
+
+## 📁 Directory Structure
 
 ```
 .
-├── README.md                  # how to run each part, milestones
-├── requirements.txt           # deps: sentence-transformers, usearch, etc.
-├── configs/
-│   └── default.yaml           # model/index/train params
-├── data/                      # raw datasets (gitignored)
-├── models/                    # saved indexes & finetuned models (gitignored)
-├── results/                   # eval outputs & plots (gitignored)
+├── .devcontainer/                 # VS Code dev container config
+│   ├── Dockerfile
+│   └── devcontainer.json
+├── docker-compose.yml             # Brings up qdrant + app
+├── dockerfile                     # (lowercase) optional standalone build
+├── requirements.txt               # Python deps
 ├── notebooks/
-│   └── report.ipynb           # final report notebook (fill as you go)
-├── scripts/                   # CLI entry points (no business logic)
-│   ├── ingest.py              # build an index from a code corpus
-│   ├── serve_api.py           # run FastAPI server
-│   ├── evaluate.py            # run eval (CoSQA) + print metrics
-│   └── train_biencoder.py     # finetune bi-encoder on CoSQA
-└── src/codesearch/
-    ├── api/
-    │   └── main.py            # FastAPI app + /search endpoint
-    ├── data/
-    │   └── cosqa.py           # CoSQA loading/prep
-    ├── eval/
-    │   └── evaluator.py       # evaluation driver
-    ├── index/
-    │   ├── base.py            # VectorIndex interface
-    │   └── usearch_index.py   # USearch backend (add/search/save/load)
-    ├── metrics/
-    │   └── ranking.py         # Recall@10, MRR@10, nDCG@10
-    ├── train/
-    │   ├── losses.py          # MultipleNegatives & InfoNCE losses
-    │   └── trainer.py         # simple finetuning loop (PyTorch)
-    ├── utils/
-    │   └── logging.py
-    └── embeddings.py          # SBERT wrapper (encode texts)
+│   └── how-to-run.ipynb           # runnable demo / report notebook
+├── scripts/
+│   ├── ingest.py                  # Chunk -> embed -> upsert to Qdrant
+│   ├── serve_api.py               # FastAPI server (Qdrant backend)
+│   └── train.py                   # Fine-tune + plots + test eval
+├── src/codesearch/
+│   ├── api/main.py                # FastAPI app (/search): encodes query, queries Qdrant
+│   ├── embeddings.py              # SentenceTransformers wrapper
+│   ├── index/
+│   │   ├── base.py
+│   │   └── qdrant_index.py        # Qdrant adapter
+│   ├── utils/
+│   │   ├── chunkers.py            # Python AST chunker + line-window fallback
+│   │   ├── eval.py                # dataset helpers (pick_text, id mapping, etc.)
+│   │   └── logging.py
+│   ├── metrics/ranking.py         # Recall@K, MRR@K, nDCG@K (binary)
+│   ├── eval/evaluator.py          # CoSQA test eval via Qdrant
+│   └── train/                     # Fine-tuning utilities
+│       ├── trainer.py             # CLI: builds train pairs, trains MNRL, plots loss
+│       └── losses.py              # InfoNCE, MNRL, and loggers
+├── data/                          # Sample code (gitignored except placeholders)
+├── models/                        # Saved checkpoints (you’ll populate)
+├── results/                       # Metrics, plots (created by scripts)
+├── qdrant_storage/                # Qdrant persistent storage (volume)
+└── README.md                      # (this file)
 ```
 
-<!-- --- -->
+---
 
-<!-- ## ✅ Milestones & what to implement -->
+## 🧩 Part 1 — Index & Search (Qdrant)
 
-<!-- ### Part 1 — Search Engine
-- [ ] `codesearch/embeddings.py`: wrap a HuggingFace/SBERT model (encode texts)
-- [ ] `codesearch/index/base.py`: `VectorIndex` interface (add, finalize, search, save/load)
-- [ ] `codesearch/index/usearch_index.py`: minimal in-memory ANN via `usearch`
-- [ ] `scripts/ingest.py`: read a corpus (e.g., .py files), chunk to passages, build index
-- [ ] `src/codesearch/api/main.py` + `scripts/serve_api.py`: FastAPI `/search`
+### Smart chunking
+`src/codesearch/utils/chunkers.py`:
+- **Python**: splits by **functions/classes** via `ast`. Long defs are windowed (e.g., 120 lines with 30‑line overlap). Prepends leading `#` comments for context.
+- **Others**: line‑window fallback with overlap.
+- Each chunk gets payload: `{{path, lang, kind, symbol, start_line, end_line, part, n_parts}}`.
 
-### Part 2 — Evaluation
-- [ ] `codesearch/data/cosqa.py`: download/prepare CoSQA pairs
-- [ ] `codesearch/metrics/ranking.py`: Recall@10, MRR@10, nDCG@10
-- [ ] `codesearch/eval/evaluator.py` & `scripts/evaluate.py`: compute metrics
+### Ingest into Qdrant
+```bash
+python scripts/ingest.py   --input_glob "data/examples/**/*.py"   --model sentence-transformers/all-MiniLM-L12-v2   --qdrant-host qdrant --qdrant-port 6333   --qdrant-collection codes --qdrant-recreate   --include-comments --max-func-lines 180 --win-lines 120 --overlap-lines 30
+```
 
-### Part 3 — Fine-tuning
-- [ ] `codesearch/train/losses.py`: Contrastive/MultipleNegativesRankingLoss or InfoNCE
-- [ ] `codesearch/train/trainer.py` & `scripts/train_biencoder.py`: train text↔code bi-encoder
-- [ ] Log training loss; save plots to `results/`
-
-### Bonus
-- [ ] Function names vs full bodies: a flag in dataset prep/eval
-- [ ] Index hyperparam sweeps: `ef`, `metric`, `quantization`, `connectivity` -->
+### Serve API
+```bash
+python scripts/serve_api.py   --backend qdrant   --model sentence-transformers/all-MiniLM-L12-v2   --qdrant-host qdrant --qdrant-port 6333   --qdrant-collection codes
+```
+### Query:
+```bash
+curl -X POST "http://localhost:8000/search"   -H "Content-Type: application/json"   -d '{{"query":"read csv with pandas", "k":5, "lang":"python"}}'
+```
 
 ---
 
-## 📓 Report Notebook
+## 🧪 Part 2 — Evaluation on CoSQA (test)
 
-In `notebooks/report.ipynb`:
-- shown some sample queries & results
-- computed metrics (baseline vs fine-tuned)
-- includes loss curve plot
-- briefly justifies **loss choice** and shows **hyperparam impacts**
+The evaluator builds a **Qdrant** index from **CoSQA corpus (test)** and retrieves for **CoSQA queries (test)**. Relevance is matched by id suffix (**qNN ↔ dNN**).
+
+Run:
+```bash
+python -m codesearch.eval.evaluator   --model sentence-transformers/all-MiniLM-L12-v2   --qdrant-host qdrant --qdrant-port 6333   --qdrant-collection cosqa_test_baseline   --K 10
+```
+
+It prints:
+- `Recall@K` — fraction of queries with at least one relevant doc in top‑K
+- `MRR@K` — reciprocal rank (position‑sensitive)
+- `nDCG@K` — position‑sensitive with ideal DCG normalization
+
+> Metrics code: `src/codesearch/metrics/ranking.py`
 
 ---
 
-## 📜 License
+## 🔧 Part 3 — Fine‑tuning (CoSQA train → test)
 
-MIT License
+Train a bi‑encoder with **MultipleNegativesRankingLoss** (in‑batch negatives). The trainer also saves a **training loss curve**.
+
+```bash
+python scripts/train.py   --finetune-dir models/cosqa-biencoder   --checkpoint-path checkpoint   --assets-dir results/assets   --batch-size 64 --epochs 1 --lr 2e-5   --qdrant-host qdrant --qdrant-port 6333   --qdrant-collection cosqa_test_bodies   --qdrant-collection-ft cosqa_test_ft   --K 10
+```
+
+What it does:
+1. Loads **CoSQA train** (queries ↔ corpus by `qNN ↔ dNN`) to create `(query, positive_code)` pairs.
+2. Trains with **MNRL**.
+3. Records **training loss** (per batch or downsampled) and saves plot to `results/assets/`.
+4. Optionally evaluates both **baseline** and **finetuned** models on **CoSQA test** using the same Qdrant pipeline.
+
+Re‑evaluate finetuned model (no code changes to evaluator):
+```bash
+python -m codesearch.eval.evaluator   --model models/cosqa-biencoder   --qdrant-host qdrant --qdrant-port 6333   --qdrant-collection cosqa_test_finetuned   --K 10
+```
+
+---
+
+## 📓 Notebook
+
+`notebooks/how-to-run.ipynb` shows the end‑to‑end flow. To run it **inside the dev container**:
+
+1. With the stack up (`docker compose up -d`) and VS Code attached, open the notebook.
+2. Select the Python kernel inside the container.
+3. Ensure Qdrant is up (visit http://localhost:6333).
+
+If running via CLI:
+```bash
+docker compose exec app bash -lc "jupyter nbconvert --to notebook --execute notebooks/how-to-run.ipynb --inplace"
+```
+
+---
+
+## 📊 Results (to be completed)
+
+> Replace this section with your actual numbers and plots.
+
+| Model                                      | Recall@10 | MRR@10 | nDCG@10 |
+|-------------------------------------------|-----------|--------|---------|
+| `all-MiniLM-L12-v2` (baseline)            |           |        |         |
+| `cosqa-biencoder` (finetuned, +epochs)    |           |        |         |
+
+- **Training loss curve**: see `results/assets/train_loss_curve.png`
+- Include latency stats if you collected them (e.g., p50/p95 retrieval time).
+
+---
+
+## 🗣 Discussion (to be completed)
+
+- What improved after fine‑tuning and why?
+- How did chunking choices (function bodies vs line windows) affect results?
+- Trade‑off: recall vs latency (Qdrant params, batch size, embedding dimension).
+- Error analysis: queries that failed; would function **names** improve results?
+
+---
+
+## ⚙️ Configuration & Tips
+
+- **Cosine similarity** with normalized embeddings (default in code).
+- When you change models (dimension), **recreate the Qdrant collection**.
+- For larger corpora, experiment with Qdrant HNSW params (`ef_search`, etc.).
+- You can plug in a cross‑encoder to **rerank** top‑K if needed.
+
+---
+
+## 🧯 Troubleshooting
+
+- **`qdrant` hostname not found**: ensure you run via `docker-compose` and VS Code attaches to the **app** service in the same network.
+- **Dimension mismatch**: delete/recreate collection when switching encoders.
+- **No loss plotted**: check the training script flags; confirm the logger/evaluator is enabled.
+
+---
+
+## 📄 License
+
+See [`LICENSE`](LICENSE).
+
+---
+
+## 🙏 Acknowledgements
+
+- [Sentence-Transformers](https://www.sbert.net/)
+- [Qdrant](https://qdrant.tech/)
+- CoSQA via [Hugging Face Datasets](https://huggingface.co/datasets/CoIR-Retrieval/cosqa)
