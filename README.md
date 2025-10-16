@@ -84,6 +84,9 @@ Steps:
 ├── .devcontainer/                 # VS Code dev container config
 │   ├── Dockerfile
 │   └── devcontainer.json
+├── google-colab/                  # Google colab version for fine-tuning of the model
+│   ├── main.ipynb
+│   └── ziped version 
 ├── docker-compose.yml             # Brings up qdrant + app
 ├── dockerfile                     # (lowercase) optional standalone build
 ├── requirements.txt               # Python deps
@@ -171,7 +174,7 @@ What it does:
 1. Loads **CoSQA train** (queries ↔ corpus by `qNN ↔ dNN`) to create `(query, positive_code)` pairs.
 2. Trains with **MNRL**.
 3. Records **training loss** (per batch or downsampled) and saves plot to `results/assets/`.
-4. Optionally evaluates both **baseline** and **finetuned** models on **CoSQA test** using the same Qdrant pipeline.
+4. Saves the model in `models` folder
 
 Re‑evaluate finetuned model (no code changes to evaluator):
 ```bash
@@ -192,6 +195,10 @@ If running via CLI:
 ```bash
 docker compose exec app bash -lc "jupyter nbconvert --to notebook --execute notebooks/how-to-run.ipynb --inplace"
 ```
+
+## Google Colab 
+
+`main.ipynb` is the main file that you have to run in colab. At the same time do not forget to load the ziped version of repo in your google disk (the account that you use for colab and disk should be the same).
 
 ---
 
