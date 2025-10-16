@@ -208,3 +208,4 @@ __marimo__/
 
 /logs.txt
 /qdrant_storage
+/models/*
