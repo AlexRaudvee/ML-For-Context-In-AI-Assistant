@@ -195,37 +195,44 @@ docker compose exec app bash -lc "jupyter nbconvert --to notebook --execute note
 
 ---
 
-## 📊 Results (to be completed)
+## 📊 Results
 
-> Replace this section with your actual numbers and plots.
-
+### Table with Results
 | Model                                      | Recall@10 | MRR@10 | nDCG@10 |
 |-------------------------------------------|-----------|--------|---------|
-| `all-MiniLM-L12-v2` (baseline)            |           |        |         |
-| `cosqa-biencoder` (finetuned, +epochs)    |           |        |         |
+| `all-MiniLM-L12-v2` (baseline)            |0.9780|0.8017|0.8456|
+| `cosqa-biencoder` (finetuned, +epochs)    |0.9960|0.8877|0.9152|
 
-- **Training loss curve**: see `results/assets/train_loss_curve.png`
-- Include latency stats if you collected them (e.g., p50/p95 retrieval time).
+> Note: In general we can see a good improvement of results 
+
+MRR@10 jumped 0.8017 → 0.8877 and nDCG@10 0.8456 → 0.9152, meaning the correct snippet appears earlier more often; Recall@10 dipped slightly 0.9780 → 0.9960. That pattern is typical for MultipleNegativesRankingLoss: it sharpens relative ordering (better top ranks) without explicitly optimizing broad coverage, so a few borderline positives fall below rank 10 while overall ranking quality improves.
+
+- **Training loss curve**: see `results/assets`
+- **GPU and Disk usage**: see `results/assets`
+
+### Visuals
+
+
+<p align="center">
+  <img src="results/assets/train_loss.png" alt="Training loss curve" width="48%">
+  <img src="results/assets/lr_rate.png" alt="Training LR rate" width="48%">
+</p>
+
+
+<p align="center">
+  <img src="results/assets/gpu_utilization.png" alt="GPU Utilization" width="48%">
+  <img src="results/assets/disk_utilization.png" alt="Disk Utilization" width="48%">
+</p>
+
 
 ---
 
-## 🗣 Discussion (to be completed)
+## 🗣 Discussion
 
-- What improved after fine‑tuning and why?
-- How did chunking choices (function bodies vs line windows) affect results?
-- Trade‑off: recall vs latency (Qdrant params, batch size, embedding dimension).
-- Error analysis: queries that failed; would function **names** improve results?
+- All three metrics improved—Recall@10: 0.9780 → 0.9960, MRR@10: 0.8017 → 0.8877, nDCG@10: 0.8456 → 0.9152—so the model both finds the right code more often and ranks it higher. This is exactly what MultipleNegativesRankingLoss tends to deliver: tighter alignment of query↔code positives and stronger separation from in-batch negatives, which boosts top-rank precision (MRR/nDCG) while also broadening coverage (Recall) when the domain matches the fine-tuning data.
 
 ---
 
-## ⚙️ Configuration & Tips
-
-- **Cosine similarity** with normalized embeddings (default in code).
-- When you change models (dimension), **recreate the Qdrant collection**.
-- For larger corpora, experiment with Qdrant HNSW params (`ef_search`, etc.).
-- You can plug in a cross‑encoder to **rerank** top‑K if needed.
-
----
 
 ## 🧯 Troubleshooting
 
