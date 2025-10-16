@@ -52,3 +52,33 @@ class LossCurveLogger:
         with torch.no_grad():
             val = self.loss([a_feats, b_feats])  # returns scalar loss
         self.losses.append(float(val.detach().cpu().item()))
+        
+
+class RecordingMNRLoss(losses.MultipleNegativesRankingLoss):
+    """
+    Wraps MultipleNegativesRankingLoss and records the training loss each time
+    forward() is called while the model is in training mode.
+    """
+    def __init__(self, model: SentenceTransformer, log_every: int = 1, ema: float | None = None):
+        super().__init__(model)
+        self.train_losses: list[float] = []
+        self.train_losses_ema: list[float] = []
+        self._step = 0
+        self.log_every = max(1, int(log_every))
+        self._ema = ema  # e.g., 0.98 for a smooth curve
+
+    def forward(self, sentence_features, labels=None):
+        loss = super().forward(sentence_features, labels)
+        # Only record during training steps (fit() sets model.train(True))
+        if self.model.training:
+            self._step += 1
+            if self._step % self.log_every == 0:
+                v = float(loss.detach().cpu().item())
+                self.train_losses.append(v)
+                if self._ema is not None:
+                    if not self.train_losses_ema:
+                        self.train_losses_ema.append(v)
+                    else:
+                        self.train_losses_ema.append(self._ema * self.train_losses_ema[-1] + (1 - self._ema) * v)
+        return loss
+

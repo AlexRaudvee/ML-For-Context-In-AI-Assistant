@@ -75,8 +75,9 @@ def main():
 
     train_dl = DataLoader(pairs, shuffle=False, batch_size=args.batch_size, drop_last=True)
     train_loss = losses.MultipleNegativesRankingLoss(model)
-    probe = LossCurveLogger(model=model, loss=train_loss, examples=pairs[:min(256, len(pairs))], batch_size=min(64, len(pairs)))
 
+    # Wrap the training loss to record it
+    train_loss = RecordingMNRLoss(model, log_every=1, ema=0.98)
 
     warmup_steps = max(0, int(0.1 * len(train_dl) * args.epochs))
     model.fit(
@@ -86,24 +87,30 @@ def main():
         optimizer_params={"lr": args.lr},
         use_amp=True,
         show_progress_bar=True,
-        output_path=args.finetune_dir,   # saves model here
-        callback=probe,             # logs probe loss periodically
-        checkpoint_path=f"{args.checkpoint_path}"
+        output_path=args.finetune_dir,
+        evaluator=None,
+        evaluation_steps=0,          
+        checkpoint_path=args.checkpoint_path if args.checkpoint_path else None,
     )
 
     print(f"[Save] Finetuned model saved to: {args.finetune_dir}")
 
-    # Plot loss curve
-    if probe.losses:
+    # Plot the recorded *training* loss
+    if train_loss.train_losses:
         plt.figure()
-        plt.plot(probe.losses)
-        plt.title("Probe Loss (MultipleNegativesRankingLoss) over training")
-        plt.xlabel("Callback calls")
+        plt.plot(train_loss.train_losses, label="train loss (per logged step)", linewidth=1)
+        if train_loss.train_losses_ema:
+            plt.plot(train_loss.train_losses_ema, label="EMA", linewidth=2)
+        plt.title("Training Loss (MultipleNegativesRankingLoss)")
+        plt.xlabel("Logged training step")
         plt.ylabel("Loss")
         plt.grid(True)
-        plt.savefig(f"{args.assets_dir}/probe_loss_training.png")
+        plt.legend()
+        out_png = f"{args.assets_dir}/train_loss_curve.png" if getattr(args, "assets_dir", None) else "train_loss_curve.png"
+        plt.savefig(out_png, bbox_inches="tight")
+        print(f"[Plot] Saved training loss curve to {out_png}")
     else:
-        print("[Warn] No loss points recorded; callback may not have fired.")
+        print("[Warn] No training loss values were recorded.")
 
 
     print("\nNotes:")
